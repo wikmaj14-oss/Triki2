@@ -49,7 +49,7 @@ pre{margin:0;font:12px/1.5 Consolas,Menlo,monospace;background:var(--bg);padding
 <h2>Trening</h2>
 <label for="mode">Ćwiczenie</label>
 <select id="mode">
-<option value="jump">Skoki i pajacyki</option>
+<option value="jump">Pajacyki i skoki (ruch góra–dół)</option>
 <option value="step">Bieg w miejscu i kroki</option>
 <option value="swing">Machnięcia ręką (boks, cięcia)</option>
 </select>
@@ -62,12 +62,12 @@ pre{margin:0;font:12px/1.5 Consolas,Menlo,monospace;background:var(--bg);padding
 <div class="stats"><div><b id="time">0:00</b><span class="mute">czas</span></div><div><b id="rate">0</b><span class="mute">na minutę</span></div></div>
 <label>Intensywność</label>
 <div class="meter"><i id="meter"></i></div>
-<p class="mute" style="margin-top:12px">Trzymaj kapsel w dłoni lub w kieszeni. Skoki liczą się po uderzeniu o ziemię.</p>
+<p class="mute" style="margin-top:12px">Pajacyki: trzymaj kapsel w dłoni. Liczy się tylko ruch w górę i w dół, uderzenia do przodu są ignorowane.</p>
 </section>
 
 <section>
 <h2>Ludzik bokser</h2>
-<p class="mute">Ręka ludzika porusza się razem z kapslem. Trzymaj Triki w dłoni i uderzaj w worek.</p>
+<p class="mute">Ręka ludzika porusza się razem z kapslem. Trzymaj Triki w dłoni, wyprostuj rękę i uderz w worek. Liczy się trafienie.</p>
 <canvas id="cv" width="720" height="420" style="width:100%;height:auto;border-radius:10px;background:var(--bg)"></canvas>
 <div class="stats"><div><b id="pc">0</b><span class="mute">ciosy</span></div><div><b id="pb">0</b><span class="mute">najmocniejszy (g)</span></div></div>
 <div class="row" style="margin-top:12px"><button id="cal">Ustaw pozycję zerową</button><button id="pr" class="sec">Zeruj ciosy</button></div>
@@ -86,14 +86,14 @@ pre{margin:0;font:12px/1.5 Consolas,Menlo,monospace;background:var(--bg);padding
 const $=id=>document.getElementById(id);
 const NUS='6e400001-b5a3-f393-e0a9-e50e24dcca9e',RX='6e400002-b5a3-f393-e0a9-e50e24dcca9e',TX='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 const START=new Uint8Array([0x20,0x10,0x00,0xD0,0x07,0x68,0x00,0x03]);
-const MODES={jump:{src:'a',base:2.2,gap:400,unit:'g'},step:{src:'a',base:1.5,gap:250,unit:'g'},swing:{src:'g',base:450,gap:300,unit:'°/s'}};
-let dev,buf=[],frames=0,running=false,reps=0,t0=0,armed=true,lastRep=0,repTimes=[],intens=0,lastUI=0;
+const MODES={jump:{src:'v',base:0.9,gap:450,unit:'g'},step:{src:'v',base:0.5,gap:250,unit:'g'},swing:{src:'g',base:450,gap:300,unit:'°/s'}};
+let gS=null,dev,buf=[],frames=0,running=false,reps=0,t0=0,armed=true,lastRep=0,repTimes=[],intens=0,lastUI=0;
 
 if(!navigator.bluetooth){$('support').textContent='Ta przeglądarka nie obsługuje Web Bluetooth. Użyj Chrome na Androidzie lub komputerze (iPhone nie wspiera tej technologii).';$('support').className='err';$('connect').disabled=true}
 else $('support').textContent='Kapsel nazywa się „TRIKI” i numer seryjny. Włącz Bluetooth (na Androidzie też lokalizację), zamknij Żappkę i rusz kapslem, żeby się obudził. Jeśli go nie widać, użyj „Pokaż wszystkie urządzenia”.';
 function setStatus(t,e){$('status').textContent=t;$('status').className='status'+(e?' err':'')}
 function thr(){const m=MODES[$('mode').value];return m.base/parseFloat($('thr').value)}
-function updThr(){const m=MODES[$('mode').value];$('thrv').textContent=thr().toFixed(m.src==='a'?1:0)+' '+m.unit}
+function updThr(){const m=MODES[$('mode').value];$('thrv').textContent=thr().toFixed(m.src==='g'?0:2)+' '+m.unit}
 $('mode').onchange=updThr;$('thr').oninput=updThr;updThr();
 
 async function connect(showAll){
@@ -126,6 +126,9 @@ function onBytes(dv){
 function onSample(a,g,t){
  figure(a,t);
  const am=Math.hypot(...a),gm=Math.hypot(...g);
+ if(!gS)gS=a.slice();for(let i=0;i<3;i++)gS[i]+=(a[i]-gS[i])*0.01;
+ const gn=Math.hypot(...gS)||1,li=a.map((x,i)=>x-gS[i]),lm=Math.hypot(...li);
+ const vert=(li[0]*gS[0]+li[1]*gS[1]+li[2]*gS[2])/gn,hor=Math.sqrt(Math.max(0,lm*lm-vert*vert));
  intens=intens*0.97+Math.min(Math.abs(am-1),2)*0.03;
  if(t-lastUI>150){lastUI=t;
   $('live').textContent=`akcelerometr  ${a.map(v=>v.toFixed(2).padStart(6)).join(' ')} g   |a| ${am.toFixed(2)}\nżyroskop      ${g.map(v=>v.toFixed(0).padStart(6)).join(' ')} °/s  |ω| ${gm.toFixed(0)}`;
@@ -133,20 +136,20 @@ function onSample(a,g,t){
   if(running){const s=(t-t0)/1000;$('time').textContent=Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
    repTimes=repTimes.filter(x=>t-x<30000);$('rate').textContent=Math.round(repTimes.length*(60000/Math.min(30000,t-t0||1)))}}
  if(!running)return;
- const m=MODES[$('mode').value],v=m.src==='a'?am:gm,th=thr();
- if(armed&&v>th&&t-lastRep>m.gap){armed=false;lastRep=t;reps++;repTimes.push(t);$('count').textContent=reps}
+ const m=MODES[$('mode').value],v=m.src==='g'?gm:vert,th=thr();
+ if(armed&&v>th&&(m.src==='g'||v>1.3*hor)&&t-lastRep>m.gap){armed=false;lastRep=t;reps++;repTimes.push(t);$('count').textContent=reps}
  else if(!armed&&v<th*0.6)armed=true;
 }
 
-let gLP=[0,0,1],ext=0,bagA=0,bagV=0,punches=0,best=0,lastPunch=0,pArmed=true,angOff=0,rawAng=0,armAng=0;
-const AXP=[[0,1],[0,2],[1,2]];
+let gLP=[0,0,1],gAng=[0,0,1],ext=0,bagA=0,bagV=0,punches=0,best=0,pk=0,touch=false,angOff=0,rawAng=0,armAng=0;
+const AXP=[[0,1],[0,2],[1,2]],BX=400,BL=BX-38;
 function figure(a,t){
  for(let i=0;i<3;i++)gLP[i]+=(a[i]-gLP[i])*0.05;
  const lin=Math.hypot(a[0]-gLP[0],a[1]-gLP[1],a[2]-gLP[2]);
- const tg=Math.min(1,lin/3);ext=tg>ext?tg:ext*0.97;
- const p=AXP[+$('ax').value];rawAng=Math.atan2(gLP[p[1]],gLP[p[0]])*($('inv').checked?-1:1);
- if(pArmed&&lin>1.2&&t-lastPunch>350){pArmed=false;lastPunch=t;punches++;best=Math.max(best,lin);bagV+=Math.min(lin,6)*0.012;$('pc').textContent=punches;$('pb').textContent=best.toFixed(1)}
- else if(!pArmed&&lin<0.5)pArmed=true;
+ const tg=Math.min(1,lin/2.5);ext=tg>ext?tg:ext*0.98;pk=Math.max(lin,pk*0.99);
+ if(Math.abs(Math.hypot(...a)-1)<0.2)for(let i=0;i<3;i++)gAng[i]+=(a[i]-gAng[i])*0.1;
+ const p=AXP[+$('ax').value],x=gAng[p[0]],y=gAng[p[1]];
+ if(Math.hypot(x,y)>0.3)rawAng=Math.atan2(y,x)*($('inv').checked?-1:1);
 }
 $('cal').onclick=()=>{angOff=-rawAng};
 $('pr').onclick=()=>{punches=0;best=0;$('pc').textContent=0;$('pb').textContent=0};
@@ -155,20 +158,22 @@ function col(n){return getComputedStyle(document.documentElement).getPropertyVal
 function draw(){
  const ink=col('--ink'),acc=col('--acc');
  cx.clearRect(0,0,720,420);
- armAng+=(rawAng+angOff-armAng)*0.25;
+ armAng+=Math.atan2(Math.sin(rawAng+angOff-armAng),Math.cos(rawAng+angOff-armAng))*0.2;
  bagV+=-bagA*0.06;bagV*=0.985;bagA+=bagV;
- cx.lineCap='round';cx.lineJoin='round';cx.strokeStyle=ink;cx.fillStyle=ink;cx.lineWidth=10;
- cx.beginPath();cx.moveTo(40,385);cx.lineTo(680,385);cx.lineWidth=3;cx.stroke();cx.lineWidth=10;
- cx.save();cx.translate(570,30);cx.rotate(-bagA);
- cx.lineWidth=3;cx.beginPath();cx.moveTo(0,0);cx.lineTo(0,70);cx.stroke();
+ const th=armAng,ph=th+1.2*(1-ext),L1=75,L2=80+75*ext;
+ const ex=170+L1*Math.cos(th),ey=170-L1*Math.sin(th),fx=ex+L2*Math.cos(ph),fy=ey-L2*Math.sin(ph);
+ const hit=fx>BL-4&&fy>80&&fy<270&&ext>0.3;
+ if(hit&&!touch){touch=true;punches++;best=Math.max(best,pk);bagV+=0.02+Math.min(pk,5)*0.012;$('pc').textContent=punches;$('pb').textContent=best.toFixed(1)}
+ else if(!hit)touch=false;
+ cx.lineCap='round';cx.lineJoin='round';cx.strokeStyle=ink;cx.lineWidth=3;
+ cx.beginPath();cx.moveTo(40,385);cx.lineTo(680,385);cx.stroke();
+ cx.save();cx.translate(BX,30);cx.rotate(-bagA);
+ cx.beginPath();cx.moveTo(0,0);cx.lineTo(0,70);cx.stroke();
  cx.fillStyle=acc;cx.beginPath();cx.roundRect(-38,70,76,190,22);cx.fill();cx.restore();
  cx.strokeStyle=ink;cx.lineWidth=10;
  cx.beginPath();cx.arc(170,115,30,0,7);cx.stroke();
  cx.beginPath();cx.moveTo(170,145);cx.lineTo(170,265);cx.moveTo(170,265);cx.lineTo(135,385);cx.moveTo(170,265);cx.lineTo(205,385);cx.stroke();
  cx.beginPath();cx.moveTo(170,170);cx.lineTo(205,225);cx.lineTo(235,185);cx.stroke();
- const th=armAng,ph=th+1.2*(1-ext);
- const L1=58,L2=62+55*ext;
- const ex=170+L1*Math.cos(th),ey=170-L1*Math.sin(th),fx=ex+L2*Math.cos(ph),fy=ey-L2*Math.sin(ph);
  cx.strokeStyle=acc;cx.beginPath();cx.moveTo(170,170);cx.lineTo(ex,ey);cx.lineTo(fx,fy);cx.stroke();
  cx.fillStyle='#d32f2f';cx.beginPath();cx.arc(fx,fy,20,0,7);cx.fill();
  requestAnimationFrame(draw);
